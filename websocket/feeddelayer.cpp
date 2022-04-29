@@ -22,9 +22,6 @@ const unsigned NETWORK_TIMEOUT = 30;
 #include <memory>
 #include <string>
 
-//------------------------------------------------------------------------------
-
-// Report a failure
 void return_if_fail(boost::beast::error_code ec, char const* what)
 {
     if (ec)
@@ -33,11 +30,9 @@ void return_if_fail(boost::beast::error_code ec, char const* what)
     }
 }
 
-// Sends a WebSocket message and prints the response
 class Session : public std::enable_shared_from_this<Session>
 {
 public:
-    // Resolver and socket require an io_context
     explicit
         Session(boost::asio::io_context& ioc, boost::asio::ssl::context& ctx)
         : m_resolver(boost::asio::make_strand(ioc))
@@ -49,7 +44,6 @@ public:
         , m_collect_stream(true)
     {}
 
-    // Start the asynchronous operation
     void run(
             char const* host,
             char const* port,
@@ -58,14 +52,12 @@ public:
             unsigned timeout_sec,
             bool collect_stream)
     {
-        // Save these for later
         m_host = host;
         m_data = data;
         m_target = target;
         m_interval_sec = timeout_sec;
         m_collect_stream = collect_stream;
 
-        // Look up the domain name
         m_resolver.async_resolve(
             host,
             port,
@@ -83,11 +75,9 @@ protected:
     {
         return_if_fail(ec, "resolve");
 
-        // Set a timeout on the operation
         boost::beast::get_lowest_layer(m_ws).expires_after(
             std::chrono::seconds(NETWORK_TIMEOUT));
 
-        // Make the connection on the IP address we get from a lookup
         boost::beast::get_lowest_layer(m_ws).async_connect(
             results,
             boost::beast::bind_front_handler(
@@ -101,11 +91,9 @@ protected:
     {
         return_if_fail(ec, "connect");
 
-        // Set a timeout on the operation
         boost::beast::get_lowest_layer(m_ws).expires_after(
             std::chrono::seconds(NETWORK_TIMEOUT));
 
-        // Set SNI Hostname (many hosts need this to handshake successfully)
         if (!SSL_set_tlsext_host_name(
             m_ws.next_layer().native_handle(),
             m_host.c_str()))
@@ -115,12 +103,8 @@ protected:
                 boost::asio::error::get_ssl_category()), "connect");
         }
 
-        // Update the host_ string. This will provide the value of the
-        // Host HTTP header during the WebSocket handshake.
-        // See https://tools.ietf.org/html/rfc7230#section-5.4
         m_host += ':' + std::to_string(ep.port());
 
-        // Perform the SSL handshake
         m_ws.next_layer().async_handshake(
             ssl::stream_base::client,
             boost::beast::bind_front_handler(
@@ -132,16 +116,12 @@ protected:
     {
         return_if_fail(ec, "ssl_handshake");
 
-        // Turn off the timeout on the tcp_stream, because
-        // the websocket stream has its own timeout system.
         boost::beast::get_lowest_layer(m_ws).expires_never();
 
-        // Set suggested timeout settings for the websocket
         m_ws.set_option(
             boost::beast::websocket::stream_base::timeout::suggested(
                 boost::beast::role_type::client));
 
-        // Set a decorator to change the User-Agent of the handshake
         m_ws.set_option(boost::beast::websocket::stream_base::decorator(
             [](boost::beast::websocket::request_type& req)
         {
@@ -150,7 +130,6 @@ protected:
                 " websocket-client-async-ssl");
         }));
 
-        // Perform the websocket handshake
         m_ws.async_handshake(m_host, m_target,
             boost::beast::bind_front_handler(
                 &Session::on_handshake,
@@ -161,7 +140,6 @@ protected:
     {
         return_if_fail(ec, "handshake");
 
-        // Send the message
         m_ws.async_write(
             boost::asio::buffer(m_data),
             boost::beast::bind_front_handler(
@@ -176,7 +154,6 @@ protected:
         boost::ignore_unused(bytes_transferred);
         return_if_fail(ec, "write");
 
-        // Read a message into our buffer
         m_ws.async_read(
             m_buffer,
             boost::beast::bind_front_handler(
@@ -191,7 +168,6 @@ protected:
         boost::ignore_unused(bytes_transferred);
         return_if_fail(ec, "read");
 
-        // The make_printable() function helps print a ConstBufferSequence
         m_last_stream = boost::beast::buffers_to_string(m_buffer.data());
         if (m_collect_stream)
         {
@@ -253,15 +229,11 @@ private:
     bool m_collect_stream;
 };
 
-//------------------------------------------------------------------------------
-
 int main(int argc, char** argv)
 {
-    // Check command line arguments
     const std::string host = "ws.binaryws.com";
     const char* target = "/websockets/v3?app_id=1089";
     const char* port = "443";
-    //const char* text = "{\"authorize\":\"k3BZ8tl6rooqhdV\"}";
     const char* data = "{\"ticks\":\"R_50\",\"subscribe\":1}";
     unsigned timeout_secs = 60;
     bool collect_stream = true;
@@ -304,21 +276,15 @@ int main(int argc, char** argv)
             collect_stream = vm["collect_stream"].as<bool>();
         }
 
-        // The io_context is required for all I/O
         boost::asio::io_context ioc;
 
-        // The SSL context is required, and holds certificates
         boost::asio::ssl::context ctx{ ssl::context::tlsv12_client };
 
-        // This holds the root certificate used for verification
         load_root_certificates(ctx);
 
-        // Launch the asynchronous operation
         std::make_shared<Session>(ioc, ctx)->run(host.c_str(), 
             port, target, data, timeout_secs, collect_stream);
-        
-        // Run the I/O service. The call will return when
-        // the socket is closed.
+
         ioc.run();
     }
     catch (const boost::program_options::error &ex)
